@@ -210,6 +210,10 @@ export default function App() {
   const [objective, setObjective] = useState(()=>load("mg_obj")||"Sèche — Road to 75 kg");
   const [editObj,   setEditObj]   = useState(false);
   const [objInput,  setObjInput]  = useState("");
+  const [userHeight,setUserHeight]= useState(()=>load("mg_height")||178);
+  const [editProfile,setEditProfile]=useState(false);
+  const [profileInput,setProfileInput]=useState({name:"",height:""});
+  const [finishModal,setFinishModal]=useState(false);
 
   /* ── helpers ── */
   const persist = (key,val,setter) => { setter(val); save(key,val); };
@@ -232,11 +236,23 @@ export default function App() {
     return Object.entries(entries).sort((a,b)=>a[0].localeCompare(b[0]));
   };
 
-  const toggleSet = (exId,set) => {
+  const toggleSet = (exId, set) => {
+    // Séquentiel : impossible de cocher S(n) si S(n-1) pas cochée
+    if (set > 1 && !isDone(exId, set - 1)) return;
     const k=`${todayKey()}_${exId}_s${set}_done`;
     persist("mg_done4",{...done,[k]:!done[k]},setDone);
   };
-  const isDone    = (exId,set) => !!done[`${todayKey()}_${exId}_s${set}_done`];
+  const isDone = (exId,set) => !!done[`${todayKey()}_${exId}_s${set}_done`];
+  const isLocked = (exId,set) => set > 1 && !isDone(exId, set - 1);
+
+  const resetSession = () => {
+    // Supprime tous les done du jour
+    const today = todayKey();
+    const filtered = Object.fromEntries(Object.entries(done).filter(([k])=>!k.startsWith(today)));
+    persist("mg_done4", filtered, setDone);
+    setFinishModal(false);
+    flash("Séance réinitialisée ✓");
+  };
 
   const addBodyW = () => {
     if(!bwInput) return;
@@ -268,7 +284,7 @@ export default function App() {
 
   // IMC dynamique basé sur le dernier poids enregistré
   const currentWeight = latestBW || 91;
-  const HEIGHT_M = 1.78;
+  const HEIGHT_M = userHeight / 100;
   const imc = (currentWeight / (HEIGHT_M * HEIGHT_M)).toFixed(1);
   const imcLabel = imc < 18.5 ? "Insuffisance" : imc < 25 ? "Normal" : imc < 30 ? "Surpoids" : "Obésité";
 
@@ -338,7 +354,7 @@ export default function App() {
                   </div>
                   <div style={{ width:1, background:BR }} />
                   <div>
-                    <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:20, color:TX, letterSpacing:"0.04em" }}>{HEIGHT_M*100} <span style={{ fontSize:12, color:TX2 }}>CM</span></div>
+                    <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:20, color:TX, letterSpacing:"0.04em" }}>{userHeight} <span style={{ fontSize:12, color:TX2 }}>CM</span></div>
                     <div style={{ fontSize:10, color:TX2, marginTop:1 }}>Taille</div>
                   </div>
                   <div style={{ width:1, background:BR }} />
@@ -347,6 +363,27 @@ export default function App() {
                     <div style={{ fontSize:10, color:TX2, marginTop:1 }}>IMC · {imcLabel}</div>
                   </div>
                 </div>
+
+                {/* Éditer profil */}
+                {editProfile?(
+                  <div style={{ marginTop:14, display:"flex", flexDirection:"column", gap:8 }}>
+                    <input placeholder="Taille en cm" type="number" value={profileInput.height}
+                      onChange={e=>setProfileInput(p=>({...p,height:e.target.value}))}
+                      style={{ padding:"10px 12px", background:S2, border:`1px solid ${GOLD}`, borderRadius:10, color:TX, fontFamily:"inherit", fontSize:13, outline:"none" }} />
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button onClick={()=>{
+                        if(profileInput.height) { save("mg_height",parseInt(profileInput.height)); setUserHeight(parseInt(profileInput.height)); }
+                        setEditProfile(false);
+                      }} style={{ flex:1, padding:"9px", background:GOLD, border:"none", borderRadius:8, color:"#000", fontWeight:700, fontFamily:"'Bebas Neue',sans-serif", fontSize:14, cursor:"pointer" }}>OK</button>
+                      <button onClick={()=>setEditProfile(false)} style={{ flex:1, padding:"9px", background:S2, border:`1px solid ${BR2}`, borderRadius:8, color:TX2, fontFamily:"inherit", fontSize:13, cursor:"pointer" }}>Annuler</button>
+                    </div>
+                  </div>
+                ):(
+                  <button onClick={()=>{ setProfileInput({height:userHeight}); setEditProfile(true); }} style={{ background:"none", border:"none", cursor:"pointer", marginTop:10, padding:0 }}>
+                    <span style={{ fontSize:11, color:GOLD }}>✏️ Modifier la taille</span>
+                  </button>
+                )}
+
                 {/* Progression objectif */}
                 {kgLeft!==null&&(
                   <div style={{ marginTop:14, padding:"10px 12px", background:S2, borderRadius:10, border:`1px solid ${parseFloat(kgLeft)<=0?"#1f4a1f":BR}` }}>
@@ -459,8 +496,12 @@ export default function App() {
               <div style={{ fontSize:10, color:TX2, letterSpacing:"0.08em", marginTop:1 }}>SÈCHE · 5 JOURS</div>
             </div>
 
-            {/* Placeholder right */}
-            <div style={{ width:32 }} />
+            {/* Excel button right */}
+            <button onClick={()=>exportExcel(weights,bodyW,calories,imc,objective)} style={{
+              background:"none", border:`1px solid ${BR2}`, borderRadius:8,
+              padding:"6px 10px", color:GOLD, fontSize:11, fontWeight:600,
+              fontFamily:"inherit", cursor:"pointer", display:"flex", alignItems:"center", gap:4,
+            }}>↓ XLS</button>
           </div>
           <div style={{ display:"flex" }}>
             {[{id:"program",label:"Programme"},{id:"charges",label:"Charges"},{id:"body",label:"Corps"},{id:"calories",label:"Calories"}].map(t=>(
@@ -495,7 +536,51 @@ export default function App() {
                 <span>{pct===100?"Séance terminée ✓":"Progression"}</span>
                 <span style={{ color:GOLD, fontWeight:700 }}>{pct}%</span>
               </div>
+              {/* Bouton terminer / reset */}
+              <div style={{ display:"flex", gap:8, marginTop:14 }}>
+                {pct===100&&(
+                  <button onClick={()=>setFinishModal(true)} style={{
+                    flex:1, padding:"11px", background:GOLD, border:"none", borderRadius:10,
+                    color:"#000", fontFamily:"'Bebas Neue',sans-serif", fontSize:15,
+                    letterSpacing:"0.06em", cursor:"pointer",
+                  }}>✓ Valider la séance</button>
+                )}
+                {pct>0&&pct<100&&(
+                  <button onClick={()=>setFinishModal(true)} style={{
+                    flex:1, padding:"11px", background:"transparent", border:`1px solid ${BR2}`,
+                    borderRadius:10, color:TX2, fontFamily:"inherit", fontSize:12, cursor:"pointer",
+                  }}>↺ Réinitialiser</button>
+                )}
+              </div>
             </div>
+
+            {/* Modal fin de séance */}
+            {finishModal&&(
+              <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:60, display:"flex", alignItems:"flex-end" }}>
+                <div style={{ width:"100%", maxWidth:480, margin:"0 auto", background:S1, borderRadius:"24px 24px 0 0", padding:28, border:`1px solid ${BR2}` }}>
+                  <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, letterSpacing:"0.08em", marginBottom:8 }}>
+                    {pct===100?"🏆 Séance terminée !":"Réinitialiser la séance ?"}
+                  </div>
+                  <div style={{ fontSize:13, color:TX2, marginBottom:24, lineHeight:1.6 }}>
+                    {pct===100
+                      ? `${doneSets} séries complétées. Tu veux valider et réinitialiser pour la prochaine séance ?`
+                      : "Tous les boutons de séries seront remis à zéro."
+                    }
+                  </div>
+                  <div style={{ display:"flex", gap:10 }}>
+                    <button onClick={resetSession} style={{
+                      flex:1, padding:"14px", background:GOLD, border:"none", borderRadius:12,
+                      color:"#000", fontWeight:700, fontFamily:"'Bebas Neue',sans-serif",
+                      fontSize:16, letterSpacing:"0.06em", cursor:"pointer",
+                    }}>Confirmer</button>
+                    <button onClick={()=>setFinishModal(false)} style={{
+                      flex:1, padding:"14px", background:S2, border:`1px solid ${BR2}`,
+                      borderRadius:12, color:TX2, fontFamily:"inherit", fontSize:13, cursor:"pointer",
+                    }}>Annuler</button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Groups */}
             {currentDay.groups.map(group=>(
@@ -519,16 +604,26 @@ export default function App() {
                               </div>
                             </div>
                             <div style={{ display:"flex", gap:6 }}>
-                              {Array.from({length:ex.sets}).map((_,i)=>(
-                                <button key={i} onClick={()=>toggleSet(ex.id,i+1)} style={{
-                                  width:30, height:30, borderRadius:"50%",
-                                  background:isDone(ex.id,i+1)?GOLD:S2,
-                                  border:`1px solid ${isDone(ex.id,i+1)?GOLD:BR2}`,
-                                  color:isDone(ex.id,i+1)?"#000":TX2,
-                                  fontSize:isDone(ex.id,i+1)?12:11, fontWeight:700,
-                                  display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
-                                }}>{isDone(ex.id,i+1)?"✓":i+1}</button>
-                              ))}
+                              {Array.from({length:ex.sets}).map((_,i)=>{
+                                const setNum = i+1;
+                                const done_ = isDone(ex.id,setNum);
+                                const locked = isLocked(ex.id,setNum);
+                                return (
+                                  <button key={i} onClick={()=>toggleSet(ex.id,setNum)} style={{
+                                    width:34, height:34, borderRadius:"50%",
+                                    background: done_?GOLD : locked?"transparent":S2,
+                                    border:`2px solid ${done_?GOLD:locked?BR:BR2}`,
+                                    color: done_?"#000" : locked?TX3:TX2,
+                                    fontSize: done_?13:11, fontWeight:700,
+                                    display:"flex", alignItems:"center", justifyContent:"center",
+                                    cursor: locked?"not-allowed":"pointer",
+                                    opacity: locked?0.35:1,
+                                    transition:"all 0.2s cubic-bezier(0.34,1.56,0.64,1)",
+                                    transform: done_?"scale(1.08)":"scale(1)",
+                                    boxShadow: done_?`0 0 10px ${GOLD}44`:"none",
+                                  }}>{done_?"✓":setNum}</button>
+                                );
+                              })}
                             </div>
                           </div>
                         </div>
